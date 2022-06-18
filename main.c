@@ -10,28 +10,47 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 
 
-void get_hash_from_hex(const char *thumbprint) {
-    unsigned int thumbprint_len = strlen(thumbprint);
-    unsigned int result_len = 20;
-    unsigned char result[result_len];
+// /opt/cprocsp/bin/amd64/certmgr certmgr --list --thumbprint 046255290b0eb1cdd1797d9ab8c81f699e3687f3
+int main() {
+    const char *store = "MY";
+    const char *thumbprint = "046255290b0eb1cdd1797d9ab8c81f699e3687f3";
 
-    int r = CryptStringToBinaryA(
+    int r;
+
+    void *cert_store = CertOpenSystemStoreA(0, store);
+    assert(cert_store);
+
+    unsigned int hash_len = 20;
+    unsigned char hash[hash_len];
+    r = CryptStringToBinaryA(
             thumbprint,
-            thumbprint_len,
+            strlen(thumbprint),
             CRYPT_STRING_HEX,
-            result,
-            &result_len,
+            hash,
+            &hash_len,
             NULL,
             NULL
     );
-    printf("r=%d\n", r);
-    for (size_t i = 0; i < result_len; i++) {
-        printf("%d\n", result[i]);
-    }
-}
+    assert(r);
 
-int main() {
-    get_hash_from_hex("046255290b0eb1cdd1797d9ab8c81f699e3687f3");
+    CRYPT_INTEGER_BLOB para = {
+            .cbData = hash_len,
+            .pbData = hash
+    };
+
+    PCCERT_CONTEXT cert_context = CertFindCertificateInStore(
+            cert_store,
+            PKCS_7_ASN_ENCODING | X509_ASN_ENCODING,
+            0,
+            CERT_FIND_HASH,
+            &para,
+            NULL
+    );
+    assert(cert_context);
+
+    r = CertCloseStore(cert_store, 0);
+    assert(r);
 }
