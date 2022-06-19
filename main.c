@@ -20,38 +20,14 @@
 #define PRINT_LAST_ERROR printf("[src/wrap.c:%d] error 0x%x\n", __LINE__, GetLastError())
 
 
-unsigned int get_last_error() {
-    return GetLastError();
-}
-
-void *open_store(const char *pszSubsystemProtocol) {
-    if (strlen(pszSubsystemProtocol) == 0) {
-        return NULL;
-    }
-    HCRYPTPROV hProv = 0;
-    HCERTSTORE r = CertOpenSystemStoreA(hProv, pszSubsystemProtocol);
-    if (!r) {
-        PRINT_LAST_ERROR;
-    }
-    return r;
-}
-
-int close_store(void *hCertStore) {
-    if (!hCertStore) {
-        return 0;
-    }
-    const DWORD dwFlags = 0;
-    return CertCloseStore(hCertStore, dwFlags);
-}
-
-void *find_certificate_by_thumbprint(void *hCertStore, const char *pszString) {
+void *wrapFindCertificateByThumbprint(void *hCertStore, const char *pszString) {
     const DWORD cchString = strlen(pszString);
     if (!hCertStore || cchString != 40) {
         return NULL;
     }
     const DWORD dwFlags = CRYPT_STRING_HEX;
     DWORD hashLen = 20;
-    unsigned char pbBinary[hashLen];
+    BYTE pbBinary[hashLen];
     if (!CryptStringToBinaryA(pszString, cchString, dwFlags, pbBinary/*out*/, &hashLen/*out*/, NULL, NULL)) {
         PRINT_LAST_ERROR;
         return NULL;
@@ -63,22 +39,16 @@ void *find_certificate_by_thumbprint(void *hCertStore, const char *pszString) {
             .cbData = hashLen,
             .pbData = pbBinary
     };
-    PCCERT_CONTEXT r = CertFindCertificateInStore(hCertStore, dwCertEncodingType, dwFindFlags, dwFindType, &p, NULL);
+    CERT_CONTEXT *r = CertFindCertificateInStore(hCertStore, dwCertEncodingType, dwFindFlags, dwFindType, &p, NULL);
     if (!r) {
         PRINT_LAST_ERROR;
     }
     return (void *) r;
 }
 
-void sign(
-        __in void *pSigningCert,
-        __in const unsigned char *data,
-        __in const unsigned int dataLen,
-        __out unsigned char *result,
-        __out unsigned int *resultLen
-) {
+DATA_BLOB *wrapSign(void *pSigningCert, const unsigned char *data, const unsigned int dataLen) {
     if (!pSigningCert || !data || dataLen == 0) {
-        return;
+        return NULL;
     }
     CRYPT_SIGN_MESSAGE_PARA p2 = {
             .cbSize = sizeof(p2),
@@ -97,13 +67,33 @@ void sign(
     DATA_BLOB *r = 0;
     if (!CadesSignMessage(&p, fDetachedSignature, cToBeSigned, rgpbToBeSigned, rgcbToBeSigned, &r/*out*/)) {
         PRINT_LAST_ERROR;
-        return;
+        return NULL;
     }
+    return r;
+}
 
-    for (size_t i = 0; i < r->cbData; i++) {
-        printf("%d ", r->pbData[i]);
-    }
 
+// /opt/cprocsp/bin/amd64/certmgr certmgr --list --thumbprint 046255290b0eb1cdd1797d9ab8c81f699e3687f3
+int main() {
+    const char *pszSubsystemProtocol = "MY";
+    const char *pszString = "046255290b0eb1cdd1797d9ab8c81f699e3687f3";
+
+    int r;
+    void *hCertStore = CertOpenSystemStoreA(0, pszSubsystemProtocol);
+    assert(hCertStore);
+    void *pCertContext = wrapFindCertificateByThumbprint(hCertStore, pszString);
+    assert(pCertContext);
+
+    DATA_BLOB *pBlob = wrapSign(
+            pCertContext,
+            (const unsigned char *) "Trixie is Best Pony!",
+            strlen("Trixie is Best Pony!")
+    );
+    assert(pBlob);
+
+// for (size_t i = 0; i < r->cbData; i++) {
+//     printf("%d ", r->pbData[i]);
+// }
 //    std::vector < BYTE > message(r->cbData);
 //    std::copy(r->pbData,
 //              r->pbData + r->cbData, message.begin());
@@ -112,32 +102,11 @@ void sign(
 //        std::cout << "CadesFreeBlob() failed" << std::endl;
 //        return empty;
 //    }
-}
 
-
-// /opt/cprocsp/bin/amd64/certmgr certmgr --list --thumbprint 046255290b0eb1cdd1797d9ab8c81f699e3687f3
-int main() {
-    const char *store_name = "MY";
-    const char *thumbprint = "046255290b0eb1cdd1797d9ab8c81f699e3687f3";
-
-    int r;
-
-    void *store = open_store(store_name);
-    assert(store);
-
-    void *cert_context = find_certificate_by_thumbprint(store, thumbprint);
-    assert(cert_context);
-
-    unsigned char *result = 0;
-    unsigned int result_len;
-    sign(
-            cert_context,
-            (const unsigned char *) "Trixie is Best Pony!",
-            strlen("Trixie is Best Pony!"),
-            result/*out*/,
-            &result_len/*out*/
-    );
-
-    r = close_store(store);
+    r = CadesFreeBlob(pBlob);
+    assert(r);
+    r = CertFreeCertificateContext(pCertContext);
+    assert(r);
+    r = CertCloseStore(hCertStore, 0);
     assert(r);
 }
